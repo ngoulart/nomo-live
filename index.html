@@ -14,12 +14,19 @@
   h1 { font-size:26px; margin:4px 0 6px; letter-spacing:-.01em; }
   .sub { color:var(--gray); margin:0 0 12px; }
   .rule { border-top:2px solid var(--red); margin:0 0 18px; }
-  .bar { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center; font-size:13px; color:var(--gray); margin-bottom:18px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; font-size:13px; color:var(--gray); margin-bottom:14px; }
   .bar .live { display:inline-flex; align-items:center; gap:6px; font-weight:700; color:var(--ink); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--green); display:inline-block; }
   .dot.off { background:var(--red); }
+  .dot.fixed { background:var(--steel); }
   .bar input[type=range] { vertical-align:middle; width:140px; accent-color:var(--steel); }
   .bar label { display:inline-flex; align-items:center; gap:6px; }
+  .bar select, .bar input[type=datetime-local], .bar button { font:inherit; font-size:13px; color:var(--ink); }
+  .bar input[type=datetime-local] { border:1px solid var(--line); border-radius:4px; padding:2px 4px; background:#fff; }
+  .bar .nav { display:inline-flex; gap:6px; }
+  .bar .nav button { padding:2px 9px; border:1px solid var(--line); background:#fff; border-radius:4px; cursor:pointer; }
+  .bar .nav button:disabled { color:#bbb; cursor:default; }
+  .bar .hint { flex-basis:100%; font-size:12px; }
   .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:22px; }
   .stat { border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
   .stat .k { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); font-weight:700; }
@@ -49,10 +56,11 @@
   .lane .meta .warn { color:var(--red); font-weight:700; }
   .lane .meta .ok { color:var(--green); font-weight:700; }
   .strip { position:relative; }
-  .strip svg { width:100%; display:block; }
+  .strip svg { width:100%; display:block; touch-action:pan-y; cursor:crosshair; }
   .axis { position:relative; height:16px; font-size:11px; color:var(--gray); }
   .axis span { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; }
   .axis span.now { transform:translateX(-100%); color:var(--ink); font-weight:700; }
+  .sel { position:absolute; top:0; bottom:16px; background:rgba(62,92,118,.16); border-left:1px solid var(--steel); border-right:1px solid var(--steel); display:none; pointer-events:none; }
   .tip { position:absolute; pointer-events:none; background:#1a1a1a; color:#fff; font-size:12px; padding:5px 8px; border-radius:4px; transform:translate(-50%,-125%); white-space:nowrap; display:none; }
   .totals { font-size:12.5px; color:var(--gray); margin-top:6px; }
   .totals b { color:var(--ink); }
@@ -64,8 +72,8 @@
 <body>
 <div class="page">
   <div class="kicker">NOMO sleep study · A11 motion pull</div>
-  <h1>Who is recording right now, and what the last 24 hours looked like</h1>
-  <p class="sub">One lane per phone. Each 30-second bin of the phone's movement is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
+  <h1>Who is recording right now, and what the chosen hours looked like</h1>
+  <p class="sub">One lane per phone. Each bin of the phone's movement (30 seconds; a minute or five on windows over a day and a half) is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
   <div class="rule"></div>
 
   <div class="bar">
@@ -74,7 +82,17 @@
     <label>Still threshold <input type="range" id="thr" min="0.001" max="0.03" step="0.001" value="0.005"> <b id="thrv">0.005 g</b></label>
     <label><input type="checkbox" id="hidetest" checked> hide smoke and tunnel tests</label>
     <label><input type="checkbox" id="hidesilent" checked> hide phones silent for 3+ days</label>
-    <label>Window <select id="hours"><option value="1" selected>1 h</option><option value="12">12 h</option><option value="24">24 h</option></select></label>
+  </div>
+  <div class="bar">
+    <label>Window <select id="hours">
+      <option value="1">last 1 h</option><option value="3">last 3 h</option><option value="6">last 6 h</option>
+      <option value="12">last 12 h</option><option value="24">last 24 h</option><option value="48">last 2 days</option>
+      <option value="72">last 3 days</option><option value="168">last 7 days</option><option value="custom">custom</option>
+    </select></label>
+    <label>from <input type="datetime-local" id="from" step="60"></label>
+    <label>to <input type="datetime-local" id="to" step="60"></label>
+    <span class="nav"><button id="earlier" title="Shift the window back by its own length">&#8592; earlier</button><button id="later" title="Shift the window forward by its own length">later &#8594;</button><button id="tonow" title="End the window now and keep it refreshing">now</button></span>
+    <span class="hint">Any window up to 14 days: pick a preset, edit the dates, step with the arrows, or drag across a lane with the mouse to zoom into that range. The address carries the window, so it can be bookmarked or sent.</span>
   </div>
 
   <div id="err"></div>
@@ -102,18 +120,42 @@
     if (!TOKEN) TOKEN = (prompt("Dashboard token (MOTION_TOKEN in server/.env)") || "").trim();
     if (TOKEN) localStorage.setItem("nomoToken", TOKEN);
   } catch (e) {}
-  const BIN = 30;
   const TESTS = /^(SMOKETEST|TUNNELTEST|DOCKERTEST|TESTPID)/;
+  const PRESETS = ["1", "3", "6", "12", "24", "48", "72", "168"];
+  const MAX_SPAN = 14 * 86400, MIN_SPAN = 300;   // what the server serves; what a drag can select
   const $ = (id) => document.getElementById(id);
-  const POLL = {"1": 30, "12": 60, "24": 120};   /* seconds between polls, by window */
-  let data = null, timer = null, countdown = 30;
-  // Window: ?hours= in the URL wins, then the last choice on this browser, then 1 h.
-  const savedHours = localStorage.getItem("nomoHours");
-  if (["1", "12", "24"].includes(params.get("hours"))) $("hours").value = params.get("hours");
-  else if (["1", "12", "24"].includes(savedHours)) $("hours").value = savedHours;
+  let data = null, BIN = 30, countdown = 30, failed = false, drag = null, cls = new Map();
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const recall = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const remember = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 
+  // The window. Live: the last `hours` hours ending now, refreshed on a timer.
+  // Fixed: an explicit [from, to] in epoch seconds, set from the date fields,
+  // the arrows, a drag across a lane, or the address (?from=&to=, as
+  // YYYY-MM-DDTHH:MM local or epoch seconds), loaded once.
+  const view = {live: true, hours: 1, from: 0, to: 0};
+  const parseWhen = (s) => {
+    if (!s) return null;
+    const n = Number(s), ms = Number.isFinite(n) ? n * 1000 : Date.parse(s);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  };
+  {
+    const f = parseWhen(params.get("from")), t = parseWhen(params.get("to"));
+    const h = parseFloat(params.get("hours")) || parseFloat(recall("nomoHours")) || 1;
+    if (f !== null) {
+      view.to = Math.min(t === null ? nowS() : t, nowS()); view.from = f;
+      view.live = !(view.to > view.from);
+    }
+    if (view.live) view.hours = Math.min(Math.max(h, MIN_SPAN / 3600), MAX_SPAN / 3600);
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
   const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
   const fmtDT = (t) => new Date(t * 1000).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+  const fmtClock = (t) => { const d = new Date(t * 1000); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+  const fmtDay = (t) => new Date(t * 1000).toLocaleDateString([], {month: "short", day: "numeric"});
+  const toInput = (t) => { const d = new Date(t * 1000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const hoursText = (h) => h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${+h.toFixed(2)} h` : `${+(h / 24).toFixed(1)} days`;
   const ago = (t, now) => {
     const s = Math.max(0, now - t);
     if (s < 90) return "just now";
@@ -123,28 +165,68 @@
   };
   const mins = (n) => {
     const m = Math.round(n * BIN / 60);
-    return m >= 90 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " h" : m + " min";
+    return m >= 2880 ? +(m / 1440).toFixed(1) + " days" : m >= 90 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " h" : m + " min";
   };
+  const spanS = () => view.live ? Math.round(view.hours * 3600) : view.to - view.from;
+  const pollSeconds = () => !view.live ? 0 : view.hours <= 1 ? 30 : view.hours <= 12 ? 60 : view.hours <= 24 ? 120 : 300;
 
+  function syncControls() {
+    const to = view.live ? nowS() : view.to, from = to - spanS();
+    $("hours").value = view.live && PRESETS.includes(String(view.hours)) ? String(view.hours) : "custom";
+    $("from").value = toInput(from); $("to").value = toInput(to);
+    $("later").disabled = view.live; $("tonow").disabled = view.live;
+    // The address carries the window, so a view can be bookmarked or sent.
+    const q = new URLSearchParams(location.search);
+    q.delete("hours"); q.delete("from"); q.delete("to");
+    if (view.live) q.set("hours", String(+view.hours.toFixed(4))); else { q.set("from", toInput(view.from)); q.set("to", toInput(view.to)); }
+    history.replaceState(null, "", location.pathname + "?" + q.toString());
+  }
+  function setLive(hours) { view.live = true; view.hours = hours; syncControls(); load(); }
+  function setFixed(from, to) {
+    to = Math.min(Math.floor(to), nowS());
+    from = Math.floor(from);
+    if (to - from < MIN_SPAN) from = to - MIN_SPAN;
+    if (to - from > MAX_SPAN) from = to - MAX_SPAN;
+    view.live = false; view.from = from; view.to = to; syncControls(); load();
+  }
+  function shift(direction) {
+    const s = spanS(), to0 = view.live ? nowS() : view.to;
+    const to = direction < 0 ? to0 - s : Math.min(to0 + s, nowS());
+    setFixed(to - s, to);
+  }
+
+  function queryString() {
+    const q = new URLSearchParams({k: TOKEN});
+    if (view.live) q.set("hours", String(+view.hours.toFixed(4)));
+    else { q.set("from", String(view.from)); q.set("to", String(view.to)); }
+    return q.toString();
+  }
   async function load() {
-    const hours = $("hours").value;
+    const req = queryString();
     try {
-      const r = await fetch(`${API}/live?k=${encodeURIComponent(TOKEN)}&hours=${hours}`, {cache: "no-store"});
+      const r = await fetch(`${API}/live?${req}`, {cache: "no-store"});
       if (!r.ok) throw new Error(`server answered ${r.status}`);
-      data = await r.json();
-      $("dot").className = "dot"; $("livetxt").textContent = "live";
-      $("err").innerHTML = "";
-      $("refreshed").textContent = "refreshed " + new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"});
+      const d = await r.json();
+      if (req !== queryString()) return;   // the window changed while this answer was in flight
+      data = d; failed = false;
+      // A server from before the range option answers with the last hours.
+      const ranged = data.from !== undefined;
+      if (!ranged) { data.from = data.now - data.hours * 3600; data.to = data.now; }
+      BIN = data.bin_seconds || 30;
+      $("dot").className = "dot" + (view.live ? "" : " fixed"); $("livetxt").textContent = view.live ? "live" : "fixed window";
+      $("err").innerHTML = ranged || view.live ? "" : `<div class="err">This server predates window ranges and answered with the last ${hoursText(data.hours)} instead; deploy the current function and migration.</div>`;
+      $("refreshed").textContent = (view.live ? "refreshed " : "loaded ") + new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"});
       render();
     } catch (e) {
+      failed = true;
       $("dot").className = "dot off"; $("livetxt").textContent = "not reachable";
       $("err").innerHTML = `<div class="err">Could not load <code>${API}/live</code>: ${e.message}. The page keeps retrying. Wrong token? Reload with ?k=&lt;MOTION_TOKEN&gt; in the address to replace the remembered one.</div>`;
     }
-    countdown = POLL[$("hours").value] || 30;
+    countdown = pollSeconds() || 30;
   }
 
   function classify(p, thr) {
-    const now = data.now, since = now - data.hours * 3600, n = Math.ceil(data.hours * 3600 / BIN);
+    const since = data.from, until = data.to, n = Math.ceil((until - since) / BIN);
     const cat = new Uint8Array(n), mad = new Float32Array(n);
     let mv = 0, st = 0;
     for (const [t, m] of p.bins) {
@@ -153,7 +235,7 @@
       mad[i] = m; cat[i] = m >= thr ? 2 : 1;
     }
     for (let i = 0; i < n; i++) { if (cat[i] === 2) mv++; else if (cat[i] === 1) st++; }
-    // Steps per 30-second slot: each Health sample spread evenly over the slots it covers.
+    // Steps per slot: each Health sample spread evenly over the slots it covers.
     const steps = new Float32Array(n);
     let stepsTotal = 0;
     for (const [a, b, v] of (p.steps || [])) {
@@ -186,103 +268,154 @@
       while (k < evs.length && evs[k][0] < slotEnd) { state = stateOf(evs[k][1]); k++; }
       screen[i] = state; if (state === 1) screenOn++;
     }
-    return {cat, mad, n, mv, st, nd: n - mv - st, since, steps, stepsTotal: Math.round(stepsTotal), sleep, asleep, screen, screenOn};
+    return {cat, mad, n, mv, st, nd: n - mv - st, since, until, steps, stepsTotal: Math.round(stepsTotal), sleep, asleep, screen, screenOn};
   }
 
-  function strip(p, c) {
-    const W = 1440, colors = ["#e6e6e6", "#3e5c76", "#cc0000"];
-    // Track layout, top to bottom: movement bar, sleep bar, steps line, axis.
-    const top = 14, h = 40, scrTop = top + h + 6, scrH = 10, sleepTop = scrTop + scrH + 8, sleepH = 12, axisBase = sleepTop + sleepH + 6, H = axisBase + 8;
-    let rects = "";
-    // Movement bar.
-    let i = 0;
-    while (i < c.n) {
-      let j = i; while (j < c.n && c.cat[j] === c.cat[i]) j++;
-      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${top}" width="${((j - i) / c.n * W).toFixed(2)}" height="${h}" fill="${colors[c.cat[i]]}"/>`;
-      i = j;
+  // What a drawn column shows when there are more slots than columns: the
+  // most frequent non-empty code among its slots, ties going to the code
+  // listed first in `prefer`.
+  function columns(arr, n, cols, prefer) {
+    if (cols >= n) return arr;
+    const out = new Uint8Array(cols), counts = new Uint32Array(4);
+    for (let j = 0; j < cols; j++) {
+      const i0 = Math.floor(j * n / cols), i1 = Math.max(i0 + 1, Math.floor((j + 1) * n / cols));
+      counts.fill(0);
+      for (let i = i0; i < i1; i++) counts[arr[i]]++;
+      let best = 0, bestN = 0;
+      for (const k of prefer) if (counts[k] > bestN) { best = k; bestN = counts[k]; }
+      out[j] = best;
     }
-    // Above the movement bar: screen events as ticks (dark gray = screen off,
-    // which on a phone without a passcode arrives as a lock; black = screen on) and uploads as triangles
-    // (green = the participant opened the app, steel = background or keep-alive).
-    for (const [t, ev] of (p.screen || [])) {
-      if (t < c.since || t > data.now) continue;
-      const x = (t - c.since) / (data.hours * 3600) * W;
-      if (ev === "forceQuit" || ev === "terminated") {
-        // Red cross: the app was swiped away (forceQuit, exact time) or found
-        // dead at the next launch (terminated, dated from the last heartbeat).
-        rects += `<path d="M${(x - 4).toFixed(1)} 1 L${(x + 4).toFixed(1)} ${top - 3} M${(x + 4).toFixed(1)} 1 L${(x - 4).toFixed(1)} ${top - 3}" stroke="#cc0000" stroke-width="${ev === "forceQuit" ? 2 : 1.2}" ${ev === "terminated" ? 'stroke-dasharray="2,1.5"' : ""}/>`;
-        continue;
-      }
-    }
-    for (const [t, trig] of (p.arrivals || [])) {
-      if (t < c.since || t > data.now) continue;
-      const x = (t - c.since) / (data.hours * 3600) * W;
-      const opened = trig === "open" || trig === "link" || trig === "manual";
-      rects += `<polygon points="${(x - 5).toFixed(1)},1 ${(x + 5).toFixed(1)},1 ${x.toFixed(1)},${top - 1}" fill="${opened ? "#2e7d32" : "#3e5c76"}"/>`;
-    }
-    // Screen bar: gold = on, dark gray = off, light = unknown.
-    const scrColors = ["#f5f5f5", "#c8902a", "#6b6b6b"];
-    i = 0;
-    while (i < c.n) {
-      let j = i; while (j < c.n && c.screen[j] === c.screen[i]) j++;
-      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${scrTop}" width="${((j - i) / c.n * W).toFixed(2)}" height="${scrH}" fill="${scrColors[c.screen[i]]}"/>`;
-      i = j;
-    }
-    // Sleep bar.
-    const sleepColors = ["#f5f5f5", "#d9dfe6", "#6f8aa5", "#c8902a"];
-    i = 0;
-    while (i < c.n) {
-      let j = i; while (j < c.n && c.sleep[j] === c.sleep[i]) j++;
-      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${sleepTop}" width="${((j - i) / c.n * W).toFixed(2)}" height="${sleepH}" fill="${sleepColors[c.sleep[i]]}"/>`;
-      i = j;
-    }
-    // Ticks in the viewer's local time. 1 h: every 5 min, labelled every 15;
-    // 12 h: hourly, labelled every 2 h; 24 h: hourly, labelled every 3 h.
-    // Tick lines live in the stretched SVG; labels are HTML below it, so the
-    // text is never squashed.
-    let ticks = "", labels = "";
-    const span = data.hours * 3600;
-    const tickSec = data.hours <= 1 ? 300 : 3600;
-    const labelSec = data.hours <= 1 ? 900 : (data.hours <= 12 ? 7200 : 10800);
-    const fmtTick = (t) => { const d = new Date(t * 1000);
-      return data.hours <= 1 ? d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false}) : String(d.getHours()).padStart(2, "0"); };
-    const offset = new Date(c.since * 1000).getTimezoneOffset() * 60;   // align to local clock
-    let t = Math.ceil((c.since - offset) / tickSec) * tickSec + offset;
-    for (; t < data.now; t += tickSec) {
-      const f = (t - c.since) / span, x = (f * W).toFixed(1);
-      const major = ((t - offset) % labelSec) === 0;
-      ticks += `<line x1="${x}" x2="${x}" y1="${axisBase}" y2="${axisBase + (major ? 6 : 3)}" stroke="#6b6b6b" stroke-width="1"/>`;
-      if (major && (1 - f) > 0.04) labels += `<span style="left:${(f * 100).toFixed(2)}%">${fmtTick(t)}</span>`;
-    }
-    labels += `<span class="now" style="left:100%">now</span>`;
-    // Last upload marker.
-    if (p.last && p.last.created >= c.since) {
-      const x = ((p.last.created - c.since) / (data.hours * 3600) * W).toFixed(1);
-      ticks += `<line x1="${x}" x2="${x}" y1="${top - 4}" y2="${axisBase}" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="2,2"/>`;
-    }
-    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-pid="${p.pid}" style="height:${H}px">${rects}${ticks}</svg><div class="axis">${labels}</div><div class="tip"></div>`;
+    return out;
   }
+
+  // Track layout in viewBox units, top to bottom: marks, movement bar, screen
+  // bar, sleep bar, tick marks; the labels are HTML below the SVG.
+  const G = {W: 1440, top: 14, h: 40, scrH: 10, sleepH: 12};
+  G.scrTop = G.top + G.h + 6; G.sleepTop = G.scrTop + G.scrH + 8; G.axisBase = G.sleepTop + G.sleepH + 6; G.H = G.axisBase + 8;
+
+  function strip(p, c) {
+    const {W, top, h, scrTop, scrH, sleepTop, sleepH, axisBase, H} = G;
+    const cols = Math.min(c.n, W), span = c.until - c.since;
+    const bars = (arr, y, height, colors) => {
+      let out = "", i = 0;
+      while (i < cols) {
+        let j = i; while (j < cols && arr[j] === arr[i]) j++;
+        out += `<rect x="${(i / cols * W).toFixed(2)}" y="${y}" width="${((j - i) / cols * W).toFixed(2)}" height="${height}" fill="${colors[arr[i]]}"/>`;
+        i = j;
+      }
+      return out;
+    };
+    let rects = bars(columns(c.cat, c.n, cols, [2, 1]), top, h, ["#e6e6e6", "#3e5c76", "#cc0000"]);
+    rects += bars(columns(c.screen, c.n, cols, [1, 2]), scrTop, scrH, ["#f5f5f5", "#c8902a", "#6b6b6b"]);
+    rects += bars(columns(c.sleep, c.n, cols, [2, 3, 1]), sleepTop, sleepH, ["#f5f5f5", "#d9dfe6", "#6f8aa5", "#c8902a"]);
+    // Above the movement bar: uploads as triangles (green = the participant
+    // opened the app, steel = background or keep-alive) and a red cross per
+    // force-quit (forceQuit exact; terminated inferred at the next launch,
+    // dashed). Marks closer than a viewBox unit share one drawing, the
+    // participant's opens first.
+    const xOf = (t) => (t - c.since) / span * W;
+    const seen = new Set();
+    const mark = (x, html) => { const key = Math.round(x); if (seen.has(key)) return ""; seen.add(key); return html; };
+    const opened = ([, trig]) => trig === "open" || trig === "link" || trig === "manual";
+    const arrivals = (p.arrivals || []).filter(([t]) => t >= c.since && t <= c.until);
+    for (const a of [...arrivals.filter(opened), ...arrivals.filter(x => !opened(x))]) {
+      const x = xOf(a[0]);
+      rects += mark(x, `<polygon points="${(x - 5).toFixed(1)},1 ${(x + 5).toFixed(1)},1 ${x.toFixed(1)},${top - 1}" fill="${opened(a) ? "#2e7d32" : "#3e5c76"}"/>`);
+    }
+    seen.clear();
+    for (const [t, ev] of (p.screen || [])) {
+      if (t < c.since || t > c.until || (ev !== "forceQuit" && ev !== "terminated")) continue;
+      const x = xOf(t);
+      rects += mark(x, `<path d="M${(x - 4).toFixed(1)} 1 L${(x + 4).toFixed(1)} ${top - 3} M${(x + 4).toFixed(1)} 1 L${(x - 4).toFixed(1)} ${top - 3}" stroke="#cc0000" stroke-width="${ev === "forceQuit" ? 2 : 1.2}" ${ev === "terminated" ? 'stroke-dasharray="2,1.5"' : ""}/>`);
+    }
+    // Last upload marker.
+    if (p.last && p.last.created >= c.since && p.last.created <= c.until) {
+      const x = xOf(p.last.created).toFixed(1);
+      rects += `<line x1="${x}" x2="${x}" y1="${top - 4}" y2="${axisBase}" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="2,2"/>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-pid="${p.pid}" style="height:${H}px">${rects}<g class="ticks"></g></svg><div class="axis"></div><div class="sel"></div><div class="tip"></div>`;
+  }
+
+  // The time axis, laid out in pixels once the lanes are in the page (and
+  // again on resize): the label step is the finest candidate that keeps
+  // labels apart at this width, minor ticks the finest divisor of it with
+  // room; labels that would overlap the end label or each other are hidden,
+  // walking from the right. Everything is aligned to the viewer's local
+  // clock; a midnight label shows the date.
+  const STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800];
+  function ticksBetween(a, b, step) {
+    const out = [], d0 = new Date(a * 1000);
+    const y = d0.getFullYear(), m = d0.getMonth(), day = d0.getDate();
+    if (step >= 86400) {
+      // Whole days counted from a fixed origin, so 2-day and weekly ticks
+      // stay put when the window moves.
+      const days = step / 86400, k = Math.round((new Date(y, m, day) - new Date(2020, 0, 1)) / 86400000) % days;
+      for (let i = -k;; i += days) { const t = new Date(y, m, day + i).getTime() / 1000; if (t > b) break; if (t >= a) out.push(t); }
+    } else {
+      // Minutes from the local midnight before the window; the Date
+      // constructor normalises, so the ticks follow the wall clock across a
+      // clock change.
+      const stepMin = step / 60;
+      for (let k = 0;; k++) { const t = new Date(y, m, day, 0, k * stepMin).getTime() / 1000; if (t > b) break; if (t >= a) out.push(t); }
+    }
+    return out;
+  }
+  function labelFor(t, step) {
+    const d = new Date(t * 1000);
+    if (step >= 86400 || (d.getHours() === 0 && d.getMinutes() === 0)) return fmtDay(t);
+    return step >= 3600 ? pad(d.getHours()) : fmtClock(t);
+  }
+  function layoutAxis(stripEl) {
+    const axis = stripEl.querySelector(".axis"), g = stripEl.querySelector("g.ticks");
+    const width = axis.getBoundingClientRect().width;
+    if (!data || !width) return;
+    const since = data.from, until = data.to, span = until - since;
+    const pxPer = (s) => width * s / span;
+    const minPx = (s) => s < 3600 ? 64 : s < 86400 ? 44 : 64;
+    const step = STEPS.find(s => pxPer(s) >= minPx(s)) || STEPS[STEPS.length - 1];
+    const minor = STEPS.find(s => s < step && step % s === 0 && pxPer(s) >= 16) || 0;
+    const majors = ticksBetween(since, until, step), majorSet = new Set(majors);
+    const minors = minor ? ticksBetween(since, until, minor).filter(t => !majorSet.has(t)) : [];
+    const xOf = (t) => (t - since) / span;
+    let lines = "", labels = "";
+    for (const t of minors) { const x = (xOf(t) * G.W).toFixed(1); lines += `<line x1="${x}" x2="${x}" y1="${G.axisBase}" y2="${G.axisBase + 3}" stroke="#6b6b6b" stroke-width="1"/>`; }
+    for (const t of majors) {
+      const f = xOf(t), x = (f * G.W).toFixed(1);
+      lines += `<line x1="${x}" x2="${x}" y1="${G.axisBase}" y2="${G.axisBase + 6}" stroke="#6b6b6b" stroke-width="1"/>`;
+      labels += `<span style="left:${(f * 100).toFixed(3)}%">${labelFor(t, step)}</span>`;
+    }
+    labels += `<span class="now" style="left:100%">${view.live ? "now" : fmtClock(until)}</span>`;
+    g.innerHTML = lines; axis.innerHTML = labels;
+    const spans = [...axis.querySelectorAll("span")], left0 = axis.getBoundingClientRect().left;
+    let keptLeft = Infinity;
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const r = spans[i].getBoundingClientRect();
+      if (r.right + 6 > keptLeft || r.left < left0 - 8) spans[i].style.visibility = "hidden";
+      else keptLeft = r.left;
+    }
+  }
+  function layoutAxes() { document.querySelectorAll("#lanes .strip").forEach(layoutAxis); }
 
   function render() {
     if (!data) return;
     const thr = parseFloat($("thr").value);
     $("thrv").textContent = thr.toFixed(3) + " g";
-    const hide = $("hidetest").checked;
-    const now = data.now, since = now - data.hours * 3600;
-    const hideSilent = $("hidesilent").checked;
-    const phones = data.phones.filter(p => !(hide && TESTS.test(p.pid)) && !(hideSilent && p.last && now - p.last.created > 3 * 86400));
+    const hide = $("hidetest").checked, hideSilent = $("hidesilent").checked;
+    const now = data.now, since = data.from, until = data.to;
+    const spanText = view.live ? `the last ${hoursText(data.hours)}` : `${fmtDT(since)} to ${fmtDT(until)}`;
+    const phones = data.phones.filter(p => !(hide && TESTS.test(p.pid)) && !(hideSilent && p.last && now - p.last.created > 3 * 86400 && !p.uploads_window));
 
-    const active = phones.filter(p => p.last && p.last.created >= since);
+    const active = phones.filter(p => p.uploads_window > 0);
     const armed = phones.filter(p => p.last && p.last.armed_until > now && p.last.accel_available !== false);
     const uploads = phones.reduce((a, p) => a + p.uploads_window, 0);
-    const cls = new Map(phones.map(p => [p.pid, classify(p, thr)]));
+    cls = new Map(phones.map(p => [p.pid, classify(p, thr)]));
     const cov = active.map(p => { const c = cls.get(p.pid); return (c.mv + c.st) / c.n; }).sort((a, b) => a - b);
     const medCov = cov.length ? cov[Math.floor(cov.length / 2)] : 0;
     $("stats").innerHTML = `
-      <div class="stat"><div class="k">Phones heard from</div><div class="v">${active.length}</div><div class="d">with an upload in the last ${data.hours} h, of ${phones.length} ever seen</div></div>
+      <div class="stat"><div class="k">Phones heard from</div><div class="v">${active.length}</div><div class="d">with an upload in ${spanText}, of ${phones.length} ever seen</div></div>
       <div class="stat"><div class="k">Recording now</div><div class="v ${armed.length ? "" : "red"}">${armed.length}</div><div class="d">phones inside a 12-hour window armed at their last open</div></div>
-      <div class="stat"><div class="k">Uploads</div><div class="v">${uploads}</div><div class="d">in the last ${data.hours} h, all triggers</div></div>
-      <div class="stat"><div class="k">Coverage</div><div class="v">${Math.round(medCov * 100)}%</div><div class="d">median share of the window with a recorded bin, active phones</div></div>`;
+      <div class="stat"><div class="k">Uploads</div><div class="v">${uploads}</div><div class="d">in ${spanText}, all triggers</div></div>
+      <div class="stat"><div class="k">Coverage</div><div class="v">${Math.round(medCov * 100)}%</div><div class="d">median share of the window with a recorded bin, phones heard from</div></div>`;
 
     if (!phones.length) { $("lanes").innerHTML = `<div class="empty">No uploads yet.</div>`; return; }
     $("lanes").innerHTML = phones.map(p => {
@@ -292,6 +425,7 @@
         : L.armed_until > now ? `<span class="ok">recording until ${fmtTime(L.armed_until)}</span>`
         : `<span class="warn">no recording armed</span> (last one ended ${fmtDT(L.armed_until)})`;
       const errs = L.n_errors ? ` · <span class="warn">${L.n_errors} error${L.n_errors > 1 ? "s" : ""}</span>` : "";
+      const inWin = (p.screen || []).filter(([t]) => t >= c.since && t <= c.until);
       return `<div class="lane">
         <div class="head"><span class="pid">${p.pid}</span>
           <span class="meta">last upload <b class="${stale ? "warn" : ""}">${ago(L.created, now)}</b> (${fmtDT(L.created)}, ${L.trigger || "v1.0"})${errs}</span>
@@ -299,15 +433,26 @@
           <span class="meta">${p.uploads_window} upload${p.uploads_window === 1 ? "" : "s"} in window · ${p.uploads} total · v${L.app_version || "?"} · ${L.model || ""} · code <b>${p.receipt}</b></span>
         </div>
         <div class="strip">${strip(p, c)}</div>
-        <div class="totals"><b>${mins(c.mv)}</b> moving · <b>${mins(c.st)}</b> still · <b>${mins(c.nd)}</b> no data · <b>${mins(c.asleep)}</b> asleep${(p.screen || []).length || p.screen_prev ? ` · <b>${mins(c.screenOn)}</b> screen on · <b>${p.screen.filter(([t, e]) => t >= c.since && (e === "screenOn" || e === "unlock")).length}</b> screen-ons · <b>${p.screen.filter(([t, e]) => t >= c.since && (e === "forceQuit" || e === "terminated")).length}</b> force-quits` : ""} · last bin ${c.mv + c.st ? fmtDT(p.bins[p.bins.length - 1][0]) : "none in window"}</div>
+        <div class="totals"><b>${mins(c.mv)}</b> moving · <b>${mins(c.st)}</b> still · <b>${mins(c.nd)}</b> no data · <b>${mins(c.asleep)}</b> asleep${inWin.length || p.screen_prev ? ` · <b>${mins(c.screenOn)}</b> screen on · <b>${inWin.filter(([, e]) => e === "screenOn" || e === "unlock").length}</b> screen-ons · <b>${inWin.filter(([, e]) => e === "forceQuit" || e === "terminated").length}</b> force-quits` : ""} · last bin ${c.mv + c.st ? fmtDT(p.bins[p.bins.length - 1][0]) : "none in window"}</div>
       </div>`;
     }).join("");
+    wire();
+    layoutAxes();
+  }
 
-    document.querySelectorAll(".strip svg").forEach(svg => {
-      const pid = svg.dataset.pid, tip = svg.nextElementSibling, c = cls.get(pid);
-      svg.addEventListener("mousemove", (ev) => {
-        const r = svg.getBoundingClientRect();
-        const f = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+  // Hover readout, and drag with the mouse to zoom into a range.
+  function wire() {
+    document.querySelectorAll("#lanes .strip").forEach(stripEl => {
+      const svg = stripEl.querySelector("svg"), tip = stripEl.querySelector(".tip"), sel = stripEl.querySelector(".sel");
+      const pid = svg.dataset.pid, p = data.phones.find(q => q.pid === pid), c = cls.get(pid);
+      const at = (ev) => { const r = svg.getBoundingClientRect(); return {r, x: ev.clientX - r.left, f: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width))}; };
+      svg.addEventListener("pointermove", (ev) => {
+        const {r, x, f} = at(ev);
+        if (drag && drag.svg === svg) {
+          const x0 = Math.min(drag.x, x), x1 = Math.max(drag.x, x);
+          drag.moved = drag.moved || x1 - x0 >= 6;
+          sel.style.left = x0 + "px"; sel.style.width = (x1 - x0) + "px"; sel.style.display = "block";
+        }
         const i = Math.min(c.n - 1, Math.floor(f * c.n));
         const t = c.since + i * BIN;
         const label = c.cat[i] === 0 ? "no data" : (c.cat[i] === 2 ? "moving" : "still") + ` · ${c.mad[i].toFixed(4)} g`;
@@ -317,19 +462,50 @@
         const evs = (p.screen || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, e]) => evName[e] || e);
         const marks = [...ups, ...evs].length ? " · " + [...ups, ...evs].join(", ") : "";
         const sl = ["", " · screen on", " · screen off"][c.screen[i]] + ["", " · in bed", " · asleep", " · awake"][c.sleep[i]] + marks;
-        tip.textContent = `${fmtDT(t)} · ${label}${sl}`;
-        tip.style.left = (ev.clientX - r.left) + "px"; tip.style.top = "0px"; tip.style.display = "block";
+        tip.textContent = `${fmtDT(t)}${BIN > 30 ? ` (${BIN / 60}-min bin)` : ""} · ${label}${sl}`;
+        tip.style.left = x + "px"; tip.style.top = "0px"; tip.style.display = "block";
       });
-      svg.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      svg.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+      svg.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType !== "mouse" || ev.button !== 0) return;
+        drag = {svg, x: at(ev).x, moved: false};
+        svg.setPointerCapture(ev.pointerId);
+      });
+      svg.addEventListener("pointerup", (ev) => {
+        if (!drag || drag.svg !== svg) return;
+        const {r, f} = at(ev), f0 = Math.min(drag.x / r.width, f), f1 = Math.max(drag.x / r.width, f), moved = drag.moved;
+        drag = null; sel.style.display = "none";
+        if (!moved) return;
+        const span = c.until - c.since;
+        setFixed(Math.floor((c.since + f0 * span) / 60) * 60, Math.ceil((c.since + f1 * span) / 60) * 60);
+      });
+      svg.addEventListener("pointercancel", () => { drag = null; sel.style.display = "none"; });
     });
   }
 
   $("thr").addEventListener("input", render);
   $("hidetest").addEventListener("change", render);
   $("hidesilent").addEventListener("change", render);
-  $("hours").addEventListener("change", () => { localStorage.setItem("nomoHours", $("hours").value); load(); });
+  $("hours").addEventListener("change", () => {
+    const v = $("hours").value;
+    if (v === "custom") { $("from").focus(); return; }
+    remember("nomoHours", v); setLive(parseFloat(v));
+  });
+  const fromFields = () => {
+    const f = parseWhen($("from").value), t = parseWhen($("to").value);
+    if (f === null || t === null) return;
+    if (t <= f) { $("err").innerHTML = `<div class="err">The window's start must come before its end.</div>`; return; }
+    setFixed(f, t);
+  };
+  $("from").addEventListener("change", fromFields);
+  $("to").addEventListener("change", fromFields);
+  $("earlier").addEventListener("click", () => shift(-1));
+  $("later").addEventListener("click", () => shift(1));
+  $("tonow").addEventListener("click", () => setLive(spanS() / 3600));
+  syncControls();
   load();
-  timer = setInterval(() => { if (--countdown <= 0) load(); }, 1000);
+  setInterval(() => { if (--countdown <= 0) { if (view.live || failed) load(); else countdown = 30; } }, 1000);
+  new ResizeObserver(() => layoutAxes()).observe($("lanes"));
 })();
 </script>
 </body>
