@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOMO motion: live</title>
+<style>
+  :root { --ink:#1a1a1a; --gray:#6b6b6b; --steel:#3e5c76; --steel-soft:#e7ebf0; --red:#cc0000; --red-soft:#fcecec;
+          --gold:#c8902a; --gold-soft:#faf3e6; --green:#2e7d32; --line:#e6e6e6; --soft:#f5f5f5; --none:#e6e6e6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fff; color:var(--ink); font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .page { max-width:1080px; margin:0 auto; padding:28px 24px 60px; }
+  .kicker { font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--gray); font-weight:700; }
+  h1 { font-size:26px; margin:4px 0 6px; letter-spacing:-.01em; }
+  .sub { color:var(--gray); margin:0 0 12px; }
+  .rule { border-top:2px solid var(--red); margin:0 0 18px; }
+  .bar { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center; font-size:13px; color:var(--gray); margin-bottom:18px; }
+  .bar .live { display:inline-flex; align-items:center; gap:6px; font-weight:700; color:var(--ink); }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--green); display:inline-block; }
+  .dot.off { background:var(--red); }
+  .bar input[type=range] { vertical-align:middle; width:140px; accent-color:var(--steel); }
+  .bar label { display:inline-flex; align-items:center; gap:6px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:22px; }
+  .stat { border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .stat .k { font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); font-weight:700; }
+  .stat .v { font-size:26px; font-weight:800; margin:2px 0; }
+  .stat .v.red { color:var(--red); }
+  .stat .d { font-size:12.5px; color:var(--gray); }
+  .legend { font-size:12.5px; color:var(--gray); margin:0 0 12px; }
+  .legend .t { display:block; margin-bottom:6px; }
+  .legend .rows { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:6px 24px; }
+  .legend .row { display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center; }
+  .legend .row .lab { font-weight:700; color:var(--ink); min-width:68px; }
+  .legend .items span, .legend .row span { white-space:nowrap; display:inline-flex; align-items:center; }
+  .legend .row .lab::before { display:none; }
+  .legend .items span::before, .legend .row span::before { content:""; display:inline-block; width:12px; height:12px; border-radius:2px; margin-right:6px; vertical-align:-2px; }
+  .legend .row .mv::before { background:var(--red); } .legend .row .st::before { background:var(--steel); } .legend .row .nd::before { background:var(--none); }
+  .legend .row .sl::before { background:#6f8aa5; } .legend .row .aw::before { background:var(--gold); } .legend .row .ib::before { background:#d9dfe6; }
+  .legend .row .ln::before { background:#dfe6ec; border-top:2px solid #1a1a1a; height:8px; }
+  .legend .row .ev::before { background:#c8902a; } .legend .row .lk::before { background:#6b6b6b; }
+  .legend .row .up::before, .legend .row .upbg::before { width:0; height:0; border-radius:0; background:none; border-left:6px solid transparent; border-right:6px solid transparent; border-top:11px solid #2e7d32; }
+  .legend .row .upbg::before { border-top-color:#3e5c76; }
+  .legend .row .fq::before { background:none; width:12px; height:12px; content:"\2715"; color:#cc0000; font-weight:800; font-size:12px; line-height:12px; text-align:center; }
+  .lane { border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:12px; }
+  .lane .head { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; margin-bottom:8px; }
+  .lane .pid { font-family:ui-monospace,Menlo,monospace; font-weight:700; font-size:15px; }
+  .lane .meta { font-size:13px; color:var(--gray); }
+  .lane .meta b { color:var(--ink); }
+  .lane .meta .warn { color:var(--red); font-weight:700; }
+  .lane .meta .ok { color:var(--green); font-weight:700; }
+  .strip { position:relative; }
+  .strip svg { width:100%; display:block; }
+  .axis { position:relative; height:16px; font-size:11px; color:var(--gray); }
+  .axis span { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; }
+  .axis span.now { transform:translateX(-100%); color:var(--ink); font-weight:700; }
+  .tip { position:absolute; pointer-events:none; background:#1a1a1a; color:#fff; font-size:12px; padding:5px 8px; border-radius:4px; transform:translate(-50%,-125%); white-space:nowrap; display:none; }
+  .totals { font-size:12.5px; color:var(--gray); margin-top:6px; }
+  .totals b { color:var(--ink); }
+  .empty { color:var(--gray); padding:30px; text-align:center; border:1px dashed var(--line); border-radius:8px; }
+  .err { background:var(--red-soft); border-left:3px solid var(--red); padding:8px 12px; margin:0 0 14px; font-size:13.5px; border-radius:0 6px 6px 0; }
+  .note { background:var(--steel-soft); border-left:3px solid var(--steel); padding:8px 12px; margin:18px 0 0; font-size:13px; color:var(--ink); border-radius:0 6px 6px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kicker">NOMO sleep study · A11 motion pull</div>
+  <h1>Who is recording right now, and what the last 24 hours looked like</h1>
+  <p class="sub">One lane per phone. Each 30-second bin of the phone's movement is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
+  <div class="rule"></div>
+
+  <div class="bar">
+    <span class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting</span></span>
+    <span id="refreshed"></span>
+    <label>Still threshold <input type="range" id="thr" min="0.001" max="0.03" step="0.001" value="0.005"> <b id="thrv">0.005 g</b></label>
+    <label><input type="checkbox" id="hidetest" checked> hide smoke and tunnel tests</label>
+    <label><input type="checkbox" id="hidesilent" checked> hide phones silent for 3+ days</label>
+    <label>Window <select id="hours"><option value="1" selected>1 h</option><option value="12">12 h</option><option value="24">24 h</option></select></label>
+  </div>
+
+  <div id="err"></div>
+  <div class="stats" id="stats"></div>
+
+  <div class="legend"><span class="t">Three tracks per phone on one clock. Above the movement bar, a triangle marks each upload and a cross a force-quit. The screen track fills only for phones that opted into the background keep-alive.</span>
+    <div class="rows">
+      <div class="row"><span class="lab">Movement</span><span class="mv">moving</span><span class="st">still</span><span class="nd">no data</span></div>
+      <div class="row"><span class="lab">Screen</span><span class="ev">on</span><span class="lk">off</span><span class="nd">unknown</span></div>
+      <div class="row"><span class="lab">Sleep</span><span class="sl">asleep</span><span class="aw">awake in bed</span><span class="ib">in bed</span></div>
+      <div class="row"><span class="lab">Marks</span><span class="up">upload after opening the app</span><span class="upbg">upload by itself</span><span class="fq">force-quit</span></div>
+    </div></div>
+  <div id="lanes"></div>
+
+  <div class="note"><b>Reading a lane.</b> A recording is armed for 12 hours at every open, so a phone that opened the app at bedtime has a lane that runs to the morning once it opens again. Gray at the right end is normal until the next open or background refresh; gray for a whole night means the recording was not armed or the upload has not come in yet.</div>
+</div>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const API = "https://mtzppuynickaaeehukqs.supabase.co/functions/v1/motion";
+  let TOKEN = params.get("k") || "";
+  try {
+    if (!TOKEN) TOKEN = localStorage.getItem("nomoToken") || "";
+    if (!TOKEN) TOKEN = (prompt("Dashboard token (MOTION_TOKEN in server/.env)") || "").trim();
+    if (TOKEN) localStorage.setItem("nomoToken", TOKEN);
+  } catch (e) {}
+  const BIN = 30;
+  const TESTS = /^(SMOKETEST|TUNNELTEST|DOCKERTEST|TESTPID)/;
+  const $ = (id) => document.getElementById(id);
+  const POLL = {"1": 30, "12": 60, "24": 120};   /* seconds between polls, by window */
+  let data = null, timer = null, countdown = 30;
+  // Window: ?hours= in the URL wins, then the last choice on this browser, then 1 h.
+  const savedHours = localStorage.getItem("nomoHours");
+  if (["1", "12", "24"].includes(params.get("hours"))) $("hours").value = params.get("hours");
+  else if (["1", "12", "24"].includes(savedHours)) $("hours").value = savedHours;
+
+  const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+  const fmtDT = (t) => new Date(t * 1000).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+  const ago = (t, now) => {
+    const s = Math.max(0, now - t);
+    if (s < 90) return "just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 48 * 3600) return (s / 3600).toFixed(1).replace(/\.0$/, "") + " h ago";
+    return Math.round(s / 86400) + " days ago";
+  };
+  const mins = (n) => {
+    const m = Math.round(n * BIN / 60);
+    return m >= 90 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " h" : m + " min";
+  };
+
+  async function load() {
+    const hours = $("hours").value;
+    try {
+      const r = await fetch(`${API}/live?k=${encodeURIComponent(TOKEN)}&hours=${hours}`, {cache: "no-store"});
+      if (!r.ok) throw new Error(`server answered ${r.status}`);
+      data = await r.json();
+      $("dot").className = "dot"; $("livetxt").textContent = "live";
+      $("err").innerHTML = "";
+      $("refreshed").textContent = "refreshed " + new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"});
+      render();
+    } catch (e) {
+      $("dot").className = "dot off"; $("livetxt").textContent = "not reachable";
+      $("err").innerHTML = `<div class="err">Could not load <code>${API}/live</code>: ${e.message}. The page keeps retrying. Wrong token? Reload with ?k=&lt;MOTION_TOKEN&gt; in the address to replace the remembered one.</div>`;
+    }
+    countdown = POLL[$("hours").value] || 30;
+  }
+
+  function classify(p, thr) {
+    const now = data.now, since = now - data.hours * 3600, n = Math.ceil(data.hours * 3600 / BIN);
+    const cat = new Uint8Array(n), mad = new Float32Array(n);
+    let mv = 0, st = 0;
+    for (const [t, m] of p.bins) {
+      const i = Math.floor((t - since) / BIN);
+      if (i < 0 || i >= n) continue;
+      mad[i] = m; cat[i] = m >= thr ? 2 : 1;
+    }
+    for (let i = 0; i < n; i++) { if (cat[i] === 2) mv++; else if (cat[i] === 1) st++; }
+    // Steps per 30-second slot: each Health sample spread evenly over the slots it covers.
+    const steps = new Float32Array(n);
+    let stepsTotal = 0;
+    for (const [a, b, v] of (p.steps || [])) {
+      const i0 = Math.max(0, Math.floor((a - since) / BIN)), i1 = Math.min(n, Math.ceil((b - since) / BIN));
+      if (i1 <= i0) continue;
+      const per = v / ((b - a) / BIN);
+      for (let i = i0; i < i1; i++) {
+        const s0 = Math.max(a, since + i * BIN), s1 = Math.min(b, since + (i + 1) * BIN);
+        if (s1 > s0) { const add = per * (s1 - s0) / BIN; steps[i] += add; stepsTotal += add; }
+      }
+    }
+    // Sleep per slot: 0 none, 1 in bed, 2 asleep, 3 awake (awake and asleep override in bed).
+    const sleep = new Uint8Array(n);
+    let asleep = 0;
+    for (const [a, b, stg] of (p.sleep || [])) {
+      const code = stg === "awake" ? 3 : stg === "inBed" ? 1 : 2;
+      const i0 = Math.max(0, Math.floor((a - since) / BIN)), i1 = Math.min(n, Math.ceil((b - since) / BIN));
+      for (let i = i0; i < i1; i++) if (code > sleep[i] || sleep[i] === 1) sleep[i] = code;
+    }
+    for (let i = 0; i < n; i++) if (sleep[i] === 2) asleep++;
+    // Screen state per slot from the event stream: 0 unknown, 1 on, 2 off.
+    // A launch means the screen is on; a force-quit or an inferred end means
+    // nothing is known until the next launch.
+    const stateOf = (e) => (e === "screenOn" || e === "unlock" || e === "launch") ? 1 : (e === "screenOff" || e === "lock") ? 2 : 0;
+    const screen = new Uint8Array(n);
+    let state = p.screen_prev ? stateOf(p.screen_prev[1]) : 0, k = 0, screenOn = 0;
+    const evs = (p.screen || []).slice().sort((a, b) => a[0] - b[0]);
+    for (let i = 0; i < n; i++) {
+      const slotEnd = since + (i + 1) * BIN;
+      while (k < evs.length && evs[k][0] < slotEnd) { state = stateOf(evs[k][1]); k++; }
+      screen[i] = state; if (state === 1) screenOn++;
+    }
+    return {cat, mad, n, mv, st, nd: n - mv - st, since, steps, stepsTotal: Math.round(stepsTotal), sleep, asleep, screen, screenOn};
+  }
+
+  function strip(p, c) {
+    const W = 1440, colors = ["#e6e6e6", "#3e5c76", "#cc0000"];
+    // Track layout, top to bottom: movement bar, sleep bar, steps line, axis.
+    const top = 14, h = 40, scrTop = top + h + 6, scrH = 10, sleepTop = scrTop + scrH + 8, sleepH = 12, axisBase = sleepTop + sleepH + 6, H = axisBase + 8;
+    let rects = "";
+    // Movement bar.
+    let i = 0;
+    while (i < c.n) {
+      let j = i; while (j < c.n && c.cat[j] === c.cat[i]) j++;
+      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${top}" width="${((j - i) / c.n * W).toFixed(2)}" height="${h}" fill="${colors[c.cat[i]]}"/>`;
+      i = j;
+    }
+    // Above the movement bar: screen events as ticks (dark gray = screen off,
+    // which on a phone without a passcode arrives as a lock; black = screen on) and uploads as triangles
+    // (green = the participant opened the app, steel = background or keep-alive).
+    for (const [t, ev] of (p.screen || [])) {
+      if (t < c.since || t > data.now) continue;
+      const x = (t - c.since) / (data.hours * 3600) * W;
+      if (ev === "forceQuit" || ev === "terminated") {
+        // Red cross: the app was swiped away (forceQuit, exact time) or found
+        // dead at the next launch (terminated, dated from the last heartbeat).
+        rects += `<path d="M${(x - 4).toFixed(1)} 1 L${(x + 4).toFixed(1)} ${top - 3} M${(x + 4).toFixed(1)} 1 L${(x - 4).toFixed(1)} ${top - 3}" stroke="#cc0000" stroke-width="${ev === "forceQuit" ? 2 : 1.2}" ${ev === "terminated" ? 'stroke-dasharray="2,1.5"' : ""}/>`;
+        continue;
+      }
+    }
+    for (const [t, trig] of (p.arrivals || [])) {
+      if (t < c.since || t > data.now) continue;
+      const x = (t - c.since) / (data.hours * 3600) * W;
+      const opened = trig === "open" || trig === "link" || trig === "manual";
+      rects += `<polygon points="${(x - 5).toFixed(1)},1 ${(x + 5).toFixed(1)},1 ${x.toFixed(1)},${top - 1}" fill="${opened ? "#2e7d32" : "#3e5c76"}"/>`;
+    }
+    // Screen bar: gold = on, dark gray = off, light = unknown.
+    const scrColors = ["#f5f5f5", "#c8902a", "#6b6b6b"];
+    i = 0;
+    while (i < c.n) {
+      let j = i; while (j < c.n && c.screen[j] === c.screen[i]) j++;
+      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${scrTop}" width="${((j - i) / c.n * W).toFixed(2)}" height="${scrH}" fill="${scrColors[c.screen[i]]}"/>`;
+      i = j;
+    }
+    // Sleep bar.
+    const sleepColors = ["#f5f5f5", "#d9dfe6", "#6f8aa5", "#c8902a"];
+    i = 0;
+    while (i < c.n) {
+      let j = i; while (j < c.n && c.sleep[j] === c.sleep[i]) j++;
+      rects += `<rect x="${(i / c.n * W).toFixed(2)}" y="${sleepTop}" width="${((j - i) / c.n * W).toFixed(2)}" height="${sleepH}" fill="${sleepColors[c.sleep[i]]}"/>`;
+      i = j;
+    }
+    // Ticks in the viewer's local time. 1 h: every 5 min, labelled every 15;
+    // 12 h: hourly, labelled every 2 h; 24 h: hourly, labelled every 3 h.
+    // Tick lines live in the stretched SVG; labels are HTML below it, so the
+    // text is never squashed.
+    let ticks = "", labels = "";
+    const span = data.hours * 3600;
+    const tickSec = data.hours <= 1 ? 300 : 3600;
+    const labelSec = data.hours <= 1 ? 900 : (data.hours <= 12 ? 7200 : 10800);
+    const fmtTick = (t) => { const d = new Date(t * 1000);
+      return data.hours <= 1 ? d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false}) : String(d.getHours()).padStart(2, "0"); };
+    const offset = new Date(c.since * 1000).getTimezoneOffset() * 60;   // align to local clock
+    let t = Math.ceil((c.since - offset) / tickSec) * tickSec + offset;
+    for (; t < data.now; t += tickSec) {
+      const f = (t - c.since) / span, x = (f * W).toFixed(1);
+      const major = ((t - offset) % labelSec) === 0;
+      ticks += `<line x1="${x}" x2="${x}" y1="${axisBase}" y2="${axisBase + (major ? 6 : 3)}" stroke="#6b6b6b" stroke-width="1"/>`;
+      if (major && (1 - f) > 0.04) labels += `<span style="left:${(f * 100).toFixed(2)}%">${fmtTick(t)}</span>`;
+    }
+    labels += `<span class="now" style="left:100%">now</span>`;
+    // Last upload marker.
+    if (p.last && p.last.created >= c.since) {
+      const x = ((p.last.created - c.since) / (data.hours * 3600) * W).toFixed(1);
+      ticks += `<line x1="${x}" x2="${x}" y1="${top - 4}" y2="${axisBase}" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="2,2"/>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" data-pid="${p.pid}" style="height:${H}px">${rects}${ticks}</svg><div class="axis">${labels}</div><div class="tip"></div>`;
+  }
+
+  function render() {
+    if (!data) return;
+    const thr = parseFloat($("thr").value);
+    $("thrv").textContent = thr.toFixed(3) + " g";
+    const hide = $("hidetest").checked;
+    const now = data.now, since = now - data.hours * 3600;
+    const hideSilent = $("hidesilent").checked;
+    const phones = data.phones.filter(p => !(hide && TESTS.test(p.pid)) && !(hideSilent && p.last && now - p.last.created > 3 * 86400));
+
+    const active = phones.filter(p => p.last && p.last.created >= since);
+    const armed = phones.filter(p => p.last && p.last.armed_until > now && p.last.accel_available !== false);
+    const uploads = phones.reduce((a, p) => a + p.uploads_window, 0);
+    const cls = new Map(phones.map(p => [p.pid, classify(p, thr)]));
+    const cov = active.map(p => { const c = cls.get(p.pid); return (c.mv + c.st) / c.n; }).sort((a, b) => a - b);
+    const medCov = cov.length ? cov[Math.floor(cov.length / 2)] : 0;
+    $("stats").innerHTML = `
+      <div class="stat"><div class="k">Phones heard from</div><div class="v">${active.length}</div><div class="d">with an upload in the last ${data.hours} h, of ${phones.length} ever seen</div></div>
+      <div class="stat"><div class="k">Recording now</div><div class="v ${armed.length ? "" : "red"}">${armed.length}</div><div class="d">phones inside a 12-hour window armed at their last open</div></div>
+      <div class="stat"><div class="k">Uploads</div><div class="v">${uploads}</div><div class="d">in the last ${data.hours} h, all triggers</div></div>
+      <div class="stat"><div class="k">Coverage</div><div class="v">${Math.round(medCov * 100)}%</div><div class="d">median share of the window with a recorded bin, active phones</div></div>`;
+
+    if (!phones.length) { $("lanes").innerHTML = `<div class="empty">No uploads yet.</div>`; return; }
+    $("lanes").innerHTML = phones.map(p => {
+      const c = cls.get(p.pid), L = p.last;
+      const stale = now - L.created > 26 * 3600;
+      const rec = L.accel_available === false ? `<span class="warn">no accelerometer on this device</span>`
+        : L.armed_until > now ? `<span class="ok">recording until ${fmtTime(L.armed_until)}</span>`
+        : `<span class="warn">no recording armed</span> (last one ended ${fmtDT(L.armed_until)})`;
+      const errs = L.n_errors ? ` · <span class="warn">${L.n_errors} error${L.n_errors > 1 ? "s" : ""}</span>` : "";
+      return `<div class="lane">
+        <div class="head"><span class="pid">${p.pid}</span>
+          <span class="meta">last upload <b class="${stale ? "warn" : ""}">${ago(L.created, now)}</b> (${fmtDT(L.created)}, ${L.trigger || "v1.0"})${errs}</span>
+          <span class="meta">${rec}${L.keep_alive ? ` · <span class="ok">keep-alive on</span>` : ""}</span>
+          <span class="meta">${p.uploads_window} upload${p.uploads_window === 1 ? "" : "s"} in window · ${p.uploads} total · v${L.app_version || "?"} · ${L.model || ""} · code <b>${p.receipt}</b></span>
+        </div>
+        <div class="strip">${strip(p, c)}</div>
+        <div class="totals"><b>${mins(c.mv)}</b> moving · <b>${mins(c.st)}</b> still · <b>${mins(c.nd)}</b> no data · <b>${mins(c.asleep)}</b> asleep${(p.screen || []).length || p.screen_prev ? ` · <b>${mins(c.screenOn)}</b> screen on · <b>${p.screen.filter(([t, e]) => t >= c.since && (e === "screenOn" || e === "unlock")).length}</b> screen-ons · <b>${p.screen.filter(([t, e]) => t >= c.since && (e === "forceQuit" || e === "terminated")).length}</b> force-quits` : ""} · last bin ${c.mv + c.st ? fmtDT(p.bins[p.bins.length - 1][0]) : "none in window"}</div>
+      </div>`;
+    }).join("");
+
+    document.querySelectorAll(".strip svg").forEach(svg => {
+      const pid = svg.dataset.pid, tip = svg.nextElementSibling, c = cls.get(pid);
+      svg.addEventListener("mousemove", (ev) => {
+        const r = svg.getBoundingClientRect();
+        const f = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+        const i = Math.min(c.n - 1, Math.floor(f * c.n));
+        const t = c.since + i * BIN;
+        const label = c.cat[i] === 0 ? "no data" : (c.cat[i] === 2 ? "moving" : "still") + ` · ${c.mad[i].toFixed(4)} g`;
+        const slotStart = c.since + i * BIN, slotEnd = slotStart + BIN;
+        const ups = (p.arrivals || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, trig]) => `upload (${trig})`);
+        const evName = {lock: "screen off", screenOff: "screen off", unlock: "screen on", screenOn: "screen on", forceQuit: "force-quit", terminated: "app ended (inferred)", launch: "app launched"};
+        const evs = (p.screen || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, e]) => evName[e] || e);
+        const marks = [...ups, ...evs].length ? " · " + [...ups, ...evs].join(", ") : "";
+        const sl = ["", " · screen on", " · screen off"][c.screen[i]] + ["", " · in bed", " · asleep", " · awake"][c.sleep[i]] + marks;
+        tip.textContent = `${fmtDT(t)} · ${label}${sl}`;
+        tip.style.left = (ev.clientX - r.left) + "px"; tip.style.top = "0px"; tip.style.display = "block";
+      });
+      svg.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    });
+  }
+
+  $("thr").addEventListener("input", render);
+  $("hidetest").addEventListener("change", render);
+  $("hidesilent").addEventListener("change", render);
+  $("hours").addEventListener("change", () => { localStorage.setItem("nomoHours", $("hours").value); load(); });
+  load();
+  timer = setInterval(() => { if (--countdown <= 0) load(); }, 1000);
+})();
+</script>
+</body>
+</html>
