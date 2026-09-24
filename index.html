@@ -72,7 +72,7 @@
 <body>
 <div class="page">
   <h1>Who is recording right now, and what the chosen hours looked like</h1>
-  <p class="sub">One lane per phone. Each bin of the phone's movement (30 seconds; a minute or five on windows over a day and a half) is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state, whether the phone was plugged in, and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
+  <p class="sub">One lane per phone. Each bin of the phone's movement (1, 5 or 10 minutes, chosen below) is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state, whether the phone was plugged in, and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
   <div class="rule"></div>
 
   <div class="bar">
@@ -87,6 +87,7 @@
       <option value="12">last 12 h</option><option value="24">last 24 h</option><option value="48">last 2 days</option>
       <option value="72">last 3 days</option><option value="168">last 7 days</option><option value="custom">custom</option>
     </select></label>
+    <label>Interval <select id="bin"><option value="60">1 min</option><option value="300">5 min</option><option value="600">10 min</option></select></label>
     <label>from <input type="datetime-local" id="from" step="60"></label>
     <label>to <input type="datetime-local" id="to" step="60"></label>
     <span class="nav"><button id="earlier" title="Shift the window back by its own length">&#8592; earlier</button><button id="later" title="Shift the window forward by its own length">later &#8594;</button><button id="tonow" title="End the window now and keep it refreshing">now</button></span>
@@ -123,6 +124,7 @@
   // dropped as the answer arrives; /live still serves them for the smoke test.
   const TESTS = /^(SMOKE|TUNNEL|DOCKER)?TEST/;
   const PRESETS = ["1", "3", "6", "12", "24", "48", "72", "168"];
+  const BINS = [60, 300, 600];   // seconds per movement bin on offer
   const MAX_SPAN = 14 * 86400, MIN_SPAN = 300;   // what the server serves; what a drag can select
   const $ = (id) => document.getElementById(id);
   let data = null, BIN = 30, countdown = 30, failed = false, drag = null, cls = new Map();
@@ -161,7 +163,7 @@
   // Fixed: an explicit [from, to] in epoch seconds, set from the date fields,
   // the arrows, a drag across a lane, or the address (?from=&to=, as
   // YYYY-MM-DDTHH:MM local or epoch seconds), loaded once.
-  const view = {live: true, hours: 1, from: 0, to: 0};
+  const view = {live: true, hours: 1, from: 0, to: 0, bin: 60};
   const parseWhen = (s) => {
     if (!s) return null;
     const n = Number(s), ms = Number.isFinite(n) ? n * 1000 : Date.parse(s);
@@ -175,6 +177,9 @@
       view.live = !(view.to > view.from);
     }
     if (view.live) view.hours = Math.min(Math.max(h, MIN_SPAN / 3600), MAX_SPAN / 3600);
+    // The bin length: from the address, else the last choice, else a minute.
+    const b = parseInt(params.get("bin") || recall("nomoBin") || "", 10);
+    if (BINS.includes(b)) view.bin = b;
   }
 
   const pad = (n) => String(n).padStart(2, "0");
@@ -196,17 +201,20 @@
     return m >= 2880 ? +(m / 1440).toFixed(1) + " days" : m >= 90 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " h" : m + " min";
   };
   const spanS = () => view.live ? Math.round(view.hours * 3600) : view.to - view.from;
+  const binText = (s) => s < 60 ? `${s}-second` : `${s / 60}-minute`;
   const pollSeconds = () => !view.live ? 0 : view.hours <= 1 ? 30 : view.hours <= 12 ? 60 : view.hours <= 24 ? 120 : 300;
 
   function syncControls() {
     const to = view.live ? nowS() : view.to, from = to - spanS();
     $("hours").value = view.live && PRESETS.includes(String(view.hours)) ? String(view.hours) : "custom";
+    $("bin").value = String(view.bin);
     $("from").value = toInput(from); $("to").value = toInput(to);
     $("later").disabled = view.live; $("tonow").disabled = view.live;
     // The address carries the window, so a view can be bookmarked or sent.
     const q = new URLSearchParams(location.search);
-    q.delete("hours"); q.delete("from"); q.delete("to");
+    q.delete("hours"); q.delete("from"); q.delete("to"); q.delete("bin");
     if (view.live) q.set("hours", String(+view.hours.toFixed(4))); else { q.set("from", toInput(view.from)); q.set("to", toInput(view.to)); }
+    q.set("bin", String(view.bin));
     history.replaceState(null, "", location.pathname + "?" + q.toString());
   }
   function setLive(hours) { view.live = true; view.hours = hours; syncControls(); load(); }
@@ -227,6 +235,7 @@
     const q = new URLSearchParams({k: TOKEN});
     if (view.live) q.set("hours", String(+view.hours.toFixed(4)));
     else { q.set("from", String(view.from)); q.set("to", String(view.to)); }
+    q.set("bin", String(view.bin));
     return q.toString();
   }
   async function load() {
@@ -244,7 +253,10 @@
       if (!ranged) { data.from = data.now - data.hours * 3600; data.to = data.now; }
       BIN = data.bin_seconds || 30;
       $("dot").className = "dot" + (view.live ? "" : " fixed"); $("livetxt").textContent = view.live ? "live" : "fixed window";
-      $("err").innerHTML = ranged || view.live ? "" : `<div class="err">This server predates window ranges and answered with the last ${hoursText(data.hours)} instead; deploy the current function and migration.</div>`;
+      const notes = [];
+      if (!ranged && !view.live) notes.push(`This server predates window ranges and answered with the last ${hoursText(data.hours)} instead; deploy the current function and migration.`);
+      if (BIN !== view.bin) notes.push(`This server ignores the interval and answered in ${binText(BIN)} bins; deploy the current function and migration.`);
+      $("err").innerHTML = notes.map(n => `<div class="err">${n}</div>`).join("");
       $("refreshed").textContent = (view.live ? "refreshed " : "loaded ") + new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"});
       render();
     } catch (e) {
@@ -510,7 +522,7 @@
         const chg = (p.charging || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, e, lv]) => (evName[e] || e) + (lv != null ? ` ${lv}%` : ""));
         const marks = [...ups, ...evs, ...chg].length ? " · " + [...ups, ...evs, ...chg].join(", ") : "";
         const sl = ["", " · screen on", " · screen off"][c.screen[i]] + ["", " · plugged in", " · on battery"][c.charging[i]] + ["", " · in bed", " · asleep", " · awake"][c.sleep[i]] + marks;
-        tip.textContent = `${fmtDT(t)}${BIN > 30 ? ` (${BIN / 60}-min bin)` : ""} · ${label}${sl}`;
+        tip.textContent = `${fmtDT(t)} (${binText(BIN)} bin) · ${label}${sl}`;
         tip.style.left = x + "px"; tip.style.top = "0px"; tip.style.display = "block";
       });
       svg.addEventListener("pointerleave", () => { tip.style.display = "none"; });
@@ -533,6 +545,10 @@
 
   $("thr").addEventListener("input", render);
   $("hidesilent").addEventListener("change", render);
+  $("bin").addEventListener("change", () => {
+    view.bin = parseInt($("bin").value, 10);
+    remember("nomoBin", String(view.bin)); syncControls(); load();
+  });
   $("hours").addEventListener("change", () => {
     const v = $("hours").value;
     if (v === "custom") { $("from").focus(); return; }
