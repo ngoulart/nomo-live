@@ -45,6 +45,7 @@
   .legend .row .sl::before { background:#6f8aa5; } .legend .row .aw::before { background:var(--gold); } .legend .row .ib::before { background:#d9dfe6; }
   .legend .row .ln::before { background:#dfe6ec; border-top:2px solid #1a1a1a; height:8px; }
   .legend .row .ev::before { background:#c8902a; } .legend .row .lk::before { background:#6b6b6b; }
+  .legend .row .pl::before { background:#2e7d32; } .legend .row .ob::before { background:#b8c4cf; }
   .legend .row .up::before, .legend .row .upbg::before { width:0; height:0; border-radius:0; background:none; border-left:6px solid transparent; border-right:6px solid transparent; border-top:11px solid #2e7d32; }
   .legend .row .upbg::before { border-top-color:#3e5c76; }
   .legend .row .fq::before { background:none; width:12px; height:12px; content:"\2715"; color:#cc0000; font-weight:800; font-size:12px; line-height:12px; text-align:center; }
@@ -73,7 +74,7 @@
 <div class="page">
   <div class="kicker">NOMO sleep study · A11 motion pull</div>
   <h1>Who is recording right now, and what the chosen hours looked like</h1>
-  <p class="sub">One lane per phone. Each bin of the phone's movement (30 seconds; a minute or five on windows over a day and a half) is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
+  <p class="sub">One lane per phone. Each bin of the phone's movement (30 seconds; a minute or five on windows over a day and a half) is <b>moving</b>, <b>still</b>, or <b>not recorded</b>; below it the screen state, whether the phone was plugged in, and the night from Health. Bins reach the server only when the app runs, so a lane ends at that phone's last upload.</p>
   <div class="rule"></div>
 
   <div class="bar">
@@ -98,10 +99,11 @@
   <div id="err"></div>
   <div class="stats" id="stats"></div>
 
-  <div class="legend"><span class="t">Three tracks per phone on one clock. Above the movement bar, a triangle marks each upload and a cross a force-quit. The screen track fills only for phones that opted into the background keep-alive.</span>
+  <div class="legend"><span class="t">Four tracks per phone on one clock. Above the movement bar, a triangle marks each upload and a cross a force-quit. The screen track fills only for phones that opted into the background keep-alive; the charging track takes its events from those phones and the battery state of every upload from all of them.</span>
     <div class="rows">
       <div class="row"><span class="lab">Movement</span><span class="mv">moving</span><span class="st">still</span><span class="nd">no data</span></div>
       <div class="row"><span class="lab">Screen</span><span class="ev">on</span><span class="lk">off</span><span class="nd">unknown</span></div>
+      <div class="row"><span class="lab">Charging</span><span class="pl">plugged in</span><span class="ob">on battery</span><span class="nd">unknown</span></div>
       <div class="row"><span class="lab">Sleep</span><span class="sl">asleep</span><span class="aw">awake in bed</span><span class="ib">in bed</span></div>
       <div class="row"><span class="lab">Marks</span><span class="up">upload after opening the app</span><span class="upbg">upload by itself</span><span class="fq">force-quit</span></div>
     </div></div>
@@ -268,7 +270,20 @@
       while (k < evs.length && evs[k][0] < slotEnd) { state = stateOf(evs[k][1]); k++; }
       screen[i] = state; if (state === 1) screenOn++;
     }
-    return {cat, mad, n, mv, st, nd: n - mv - st, since, until, steps, stepsTotal: Math.round(stepsTotal), sleep, asleep, screen, screenOn};
+    // Charging state per slot: 0 unknown, 1 plugged in, 2 on battery, from
+    // the events and from the battery state each upload carried (the only
+    // anchor for phones without the keep-alive). An unknown state changes nothing.
+    const chargeOf = (e) => (e === "pluggedIn" || e === "batteryFull" || e === "charging" || e === "full") ? 1 : e === "unplugged" ? 2 : 0;
+    const anchors = [...(p.charging || []).map(([t, e]) => [t, e]), ...(p.arrivals || []).filter(a => a[3]).map(a => [a[0], a[3]])].sort((a, b) => a[0] - b[0]);
+    const charging = new Uint8Array(n);
+    let cstate = p.charging_prev ? chargeOf(p.charging_prev[1]) : 0, kc = 0, plugged = 0;
+    for (let i = 0; i < n; i++) {
+      const slotEnd = since + (i + 1) * BIN;
+      while (kc < anchors.length && anchors[kc][0] < slotEnd) { const s = chargeOf(anchors[kc][1]); if (s) cstate = s; kc++; }
+      charging[i] = cstate; if (cstate === 1) plugged++;
+    }
+    const hasCharging = anchors.length > 0 || !!p.charging_prev;
+    return {cat, mad, n, mv, st, nd: n - mv - st, since, until, steps, stepsTotal: Math.round(stepsTotal), sleep, asleep, screen, screenOn, charging, plugged, hasCharging};
   }
 
   // What a drawn column shows when there are more slots than columns: the
@@ -289,12 +304,12 @@
   }
 
   // Track layout in viewBox units, top to bottom: marks, movement bar, screen
-  // bar, sleep bar, tick marks; the labels are HTML below the SVG.
-  const G = {W: 1440, top: 14, h: 40, scrH: 10, sleepH: 12};
-  G.scrTop = G.top + G.h + 6; G.sleepTop = G.scrTop + G.scrH + 8; G.axisBase = G.sleepTop + G.sleepH + 6; G.H = G.axisBase + 8;
+  // bar, charging bar, sleep bar, tick marks; the labels are HTML below the SVG.
+  const G = {W: 1440, top: 14, h: 40, scrH: 10, chgH: 10, sleepH: 12};
+  G.scrTop = G.top + G.h + 6; G.chgTop = G.scrTop + G.scrH + 6; G.sleepTop = G.chgTop + G.chgH + 8; G.axisBase = G.sleepTop + G.sleepH + 6; G.H = G.axisBase + 8;
 
   function strip(p, c) {
-    const {W, top, h, scrTop, scrH, sleepTop, sleepH, axisBase, H} = G;
+    const {W, top, h, scrTop, scrH, chgTop, chgH, sleepTop, sleepH, axisBase, H} = G;
     const cols = Math.min(c.n, W), span = c.until - c.since;
     const bars = (arr, y, height, colors) => {
       let out = "", i = 0;
@@ -307,6 +322,7 @@
     };
     let rects = bars(columns(c.cat, c.n, cols, [2, 1]), top, h, ["#e6e6e6", "#3e5c76", "#cc0000"]);
     rects += bars(columns(c.screen, c.n, cols, [1, 2]), scrTop, scrH, ["#f5f5f5", "#c8902a", "#6b6b6b"]);
+    rects += bars(columns(c.charging, c.n, cols, [1, 2]), chgTop, chgH, ["#f5f5f5", "#2e7d32", "#b8c4cf"]);
     rects += bars(columns(c.sleep, c.n, cols, [2, 3, 1]), sleepTop, sleepH, ["#f5f5f5", "#d9dfe6", "#6f8aa5", "#c8902a"]);
     // Above the movement bar: uploads as triangles (green = the participant
     // opened the app, steel = background or keep-alive) and a red cross per
@@ -425,15 +441,17 @@
         : L.armed_until > now ? `<span class="ok">recording until ${fmtTime(L.armed_until)}</span>`
         : `<span class="warn">no recording armed</span> (last one ended ${fmtDT(L.armed_until)})`;
       const errs = L.n_errors ? ` · <span class="warn">${L.n_errors} error${L.n_errors > 1 ? "s" : ""}</span>` : "";
+      const bat = L.battery_state && L.battery_state !== "unknown"
+        ? ` · ${L.battery_state === "unplugged" ? "on battery" : "plugged in"}${L.battery_level != null ? ` ${L.battery_level}%` : ""}${L.low_power ? ", Low Power Mode" : ""} at last upload` : "";
       const inWin = (p.screen || []).filter(([t]) => t >= c.since && t <= c.until);
       return `<div class="lane">
         <div class="head"><span class="pid">${p.pid}</span>
           <span class="meta">last upload <b class="${stale ? "warn" : ""}">${ago(L.created, now)}</b> (${fmtDT(L.created)}, ${L.trigger || "v1.0"})${errs}</span>
-          <span class="meta">${rec}${L.keep_alive ? ` · <span class="ok">keep-alive on</span>` : ""}</span>
+          <span class="meta">${rec}${L.keep_alive ? ` · <span class="ok">keep-alive on</span>` : ""}${bat}</span>
           <span class="meta">${p.uploads_window} upload${p.uploads_window === 1 ? "" : "s"} in window · ${p.uploads} total · v${L.app_version || "?"} · ${L.model || ""} · code <b>${p.receipt}</b></span>
         </div>
         <div class="strip">${strip(p, c)}</div>
-        <div class="totals"><b>${mins(c.mv)}</b> moving · <b>${mins(c.st)}</b> still · <b>${mins(c.nd)}</b> no data · <b>${mins(c.asleep)}</b> asleep${inWin.length || p.screen_prev ? ` · <b>${mins(c.screenOn)}</b> screen on · <b>${inWin.filter(([, e]) => e === "screenOn" || e === "unlock").length}</b> screen-ons · <b>${inWin.filter(([, e]) => e === "forceQuit" || e === "terminated").length}</b> force-quits` : ""} · last bin ${c.mv + c.st ? fmtDT(p.bins[p.bins.length - 1][0]) : "none in window"}</div>
+        <div class="totals"><b>${mins(c.mv)}</b> moving · <b>${mins(c.st)}</b> still · <b>${mins(c.nd)}</b> no data · <b>${mins(c.asleep)}</b> asleep${inWin.length || p.screen_prev ? ` · <b>${mins(c.screenOn)}</b> screen on · <b>${inWin.filter(([, e]) => e === "screenOn" || e === "unlock").length}</b> screen-ons · <b>${inWin.filter(([, e]) => e === "forceQuit" || e === "terminated").length}</b> force-quits` : ""}${c.hasCharging ? ` · <b>${mins(c.plugged)}</b> plugged in · <b>${(p.charging || []).filter(([t, e]) => t >= c.since && t <= c.until && e === "pluggedIn").length}</b> plug-ins` : ""} · last bin ${c.mv + c.st ? fmtDT(p.bins[p.bins.length - 1][0]) : "none in window"}</div>
       </div>`;
     }).join("");
     wire();
@@ -458,10 +476,11 @@
         const label = c.cat[i] === 0 ? "no data" : (c.cat[i] === 2 ? "moving" : "still") + ` · ${c.mad[i].toFixed(4)} g`;
         const slotStart = c.since + i * BIN, slotEnd = slotStart + BIN;
         const ups = (p.arrivals || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, trig]) => `upload (${trig})`);
-        const evName = {lock: "screen off", screenOff: "screen off", unlock: "screen on", screenOn: "screen on", forceQuit: "force-quit", terminated: "app ended (inferred)", launch: "app launched"};
+        const evName = {lock: "screen off", screenOff: "screen off", unlock: "screen on", screenOn: "screen on", forceQuit: "force-quit", terminated: "app ended (inferred)", launch: "app launched", launchBackground: "app woke in the background", pluggedIn: "plugged in", unplugged: "unplugged", batteryFull: "battery full"};
         const evs = (p.screen || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, e]) => evName[e] || e);
-        const marks = [...ups, ...evs].length ? " · " + [...ups, ...evs].join(", ") : "";
-        const sl = ["", " · screen on", " · screen off"][c.screen[i]] + ["", " · in bed", " · asleep", " · awake"][c.sleep[i]] + marks;
+        const chg = (p.charging || []).filter(([t]) => t >= slotStart - BIN && t < slotEnd + BIN).map(([, e, lv]) => (evName[e] || e) + (lv != null ? ` ${lv}%` : ""));
+        const marks = [...ups, ...evs, ...chg].length ? " · " + [...ups, ...evs, ...chg].join(", ") : "";
+        const sl = ["", " · screen on", " · screen off"][c.screen[i]] + ["", " · plugged in", " · on battery"][c.charging[i]] + ["", " · in bed", " · asleep", " · awake"][c.sleep[i]] + marks;
         tip.textContent = `${fmtDT(t)}${BIN > 30 ? ` (${BIN / 60}-min bin)` : ""} · ${label}${sl}`;
         tip.style.left = x + "px"; tip.style.top = "0px"; tip.style.display = "block";
       });
